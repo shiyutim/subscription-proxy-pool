@@ -4,6 +4,8 @@
 
 默认每次请求按顺序轮换，通过实际请求反馈节点健康。缓存和主动探测按需开启；需要连续使用同一代理的业务可创建独立会话，共享底层连接与节点健康。
 
+[crates.io](https://crates.io/crates/subscription-proxy-pool) · [API 文档](https://docs.rs/subscription-proxy-pool) · [GitHub](https://github.com/shiyutim/subscription-proxy-pool)
+
 ## 使用
 
 在 Cargo 依赖中添加 `subscription-proxy-pool = "0.1"`；依赖配置和完整示例见 [英文 README](README.md#quick-start)。在本地源码目录中可运行以下示例：

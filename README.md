@@ -9,7 +9,7 @@ learn node health from request outcomes, and enable disk caching or active
 probes only when configured. Sessions support workflows that need one proxy
 across several requests while sharing the pool's connections and health state.
 
-[中文说明](README.zh-CN.md) · [Publishing](PUBLISHING.md)
+[crates.io](https://crates.io/crates/subscription-proxy-pool) · [API docs](https://docs.rs/subscription-proxy-pool) · [GitHub](https://github.com/shiyutim/subscription-proxy-pool) · [中文说明](README.zh-CN.md) · [Publishing](PUBLISHING.md)
 
 ## Quick start
 

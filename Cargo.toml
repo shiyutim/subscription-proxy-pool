@@ -7,6 +7,7 @@ description = "Subscription-backed HTTP and SOCKS proxy pools with caching, heal
 license = "MIT"
 readme = "README.md"
 documentation = "https://docs.rs/subscription-proxy-pool"
+repository = "https://github.com/shiyutim/subscription-proxy-pool"
 keywords = ["proxy", "subscription", "rotation", "reqwest", "clash"]
 categories = ["network-programming", "asynchronous"]
 include = ["src/**", "tests/**", "examples/**", "Cargo.toml", "Cargo.lock", "README.md", "README.zh-CN.md", "PUBLISHING.md", "LICENSE", "CHANGELOG.md"]
