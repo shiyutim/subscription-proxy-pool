@@ -745,7 +745,7 @@ mod tests {
         for id in nodes.iter() {
             assert_eq!(counts[id.as_str()], 200);
         }
-        for (index, batch) in locked.1.chunks_exact(20).enumerate() {
+        for (index, batch) in locked.1.as_chunks::<20>().0.iter().enumerate() {
             assert!(batch.iter().all(|id| id == &nodes[index % nodes.len()]));
         }
     }
