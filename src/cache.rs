@@ -147,11 +147,32 @@ fn cache_path(directory: &Path, source_key: &str) -> PathBuf {
     directory.join(format!("{source_key}.json"))
 }
 
+fn missing_cache(directory: &Path) -> Result<Option<CachedNodes>> {
+    // Windows reports a missing path even when an ancestor is a regular file.
+    // Distinguish an absent cache from an unusable configured directory.
+    for ancestor in directory
+        .ancestors()
+        .filter(|path| !path.as_os_str().is_empty())
+    {
+        match fs::metadata(ancestor) {
+            Ok(metadata) if metadata.is_dir() => break,
+            Ok(_) => {
+                return Err(cache_io_error(std::io::ErrorKind::NotADirectory.into()));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(cache_io_error(error)),
+        }
+    }
+    Ok(None)
+}
+
 fn load(policy: &CachePolicy, source_key: &str, now: SystemTime) -> Result<Option<CachedNodes>> {
     let path = cache_path(&policy.directory, source_key);
     let metadata = match fs::symlink_metadata(&path) {
         Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return missing_cache(&policy.directory);
+        }
         Err(error) => return Err(cache_io_error(error)),
     };
     // Cache entries are regular files. Do not follow links to unrelated files.
@@ -160,7 +181,9 @@ fn load(policy: &CachePolicy, source_key: &str, now: SystemTime) -> Result<Optio
     }
     let file = match File::open(path) {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return missing_cache(&policy.directory);
+        }
         Err(error) => return Err(cache_io_error(error)),
     };
     let metadata = file.metadata().map_err(cache_io_error)?;
@@ -219,10 +242,21 @@ fn save(directory: &Path, entry: &CacheEntry) -> Result<()> {
         directories.mode(0o700);
     }
     directories.create(directory).map_err(cache_io_error)?;
-    let mut temporary = tempfile::Builder::new()
-        .prefix(".subscription-proxy-")
-        .suffix(".tmp")
-        .tempfile_in(directory)
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(".subscription-proxy-").suffix(".tmp");
+    #[cfg(not(windows))]
+    let mut temporary = builder.tempfile_in(directory).map_err(cache_io_error)?;
+    #[cfg(windows)]
+    let mut temporary = builder
+        // std::fs::rename preserves file attributes, so create a normal file
+        // instead of tempfile's FILE_ATTRIBUTE_TEMPORARY Windows default.
+        .make_in(directory, |path| {
+            fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(path)
+        })
         .map_err(cache_io_error)?;
     #[cfg(unix)]
     {
@@ -234,6 +268,15 @@ fn save(directory: &Path, entry: &CacheEntry) -> Result<()> {
     }
     temporary.write_all(&bytes).map_err(cache_io_error)?;
     temporary.as_file().sync_all().map_err(cache_io_error)?;
+    #[cfg(windows)]
+    {
+        // Unlike tempfile's MoveFileExW-only persist, std::fs::rename can
+        // replace an open destination using Windows POSIX rename semantics.
+        // Keep the cleanup guard until the rename has succeeded or failed.
+        let temporary = temporary.into_temp_path();
+        fs::rename(&temporary, cache_path(directory, &entry.source_key)).map_err(cache_io_error)?;
+    }
+    #[cfg(not(windows))]
     temporary
         .persist(cache_path(directory, &entry.source_key))
         .map_err(|error| cache_io_error(error.error))?;
@@ -303,20 +346,18 @@ mod tests {
         let loaded = store.load(KEY).await.unwrap().unwrap();
         assert!(loaded.fresh);
         assert_eq!(loaded.nodes, vec![node(9090)]);
-        // An already-open handle keeps the old inode when replacement is atomic.
+        // An open handle keeps reading the previous file after replacement.
+        let old: CacheEntry = serde_json::from_reader(original_file).unwrap();
+        assert_eq!(old.nodes, vec![node(8080)]);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let old: CacheEntry = serde_json::from_reader(original_file).unwrap();
-            assert_eq!(old.nodes, vec![node(8080)]);
             let mode = fs::metadata(cache_path(directory.path(), KEY))
                 .unwrap()
                 .permissions()
                 .mode();
             assert_eq!(mode & 0o777, 0o600);
         }
-        #[cfg(not(unix))]
-        drop(original_file);
         assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
     }
 
@@ -510,7 +551,8 @@ mod tests {
         bad_schema.schema += 1;
         let mut wrong_source = entry(now);
         wrong_source.source_key = OTHER_KEY.to_owned();
-        let future = entry(now + Duration::from_nanos(1));
+        // Windows SystemTime has 100 ns precision; 1 ns can round back to now.
+        let future = entry(now + Duration::from_secs(1));
         let mut empty = entry(now);
         empty.nodes.clear();
         let mut invalid = entry(now);
@@ -585,11 +627,16 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("file");
         fs::write(&path, b"not a directory").unwrap();
-        let store = CacheStore::new(CachePolicy::new(path));
-        assert!(matches!(store.load(KEY).await, Err(Error::Io(_))));
-        assert!(matches!(
-            store.save(KEY, &[node(8080)]).await,
-            Err(Error::Io(_))
-        ));
+        for invalid in [path.clone(), path.join("child")] {
+            let store = CacheStore::new(CachePolicy::new(invalid));
+            assert!(matches!(store.load(KEY).await, Err(Error::Io(_))));
+            assert!(matches!(
+                store.save(KEY, &[node(8080)]).await,
+                Err(Error::Io(_))
+            ));
+        }
+        let missing = directory.path().join("missing").join("child");
+        let store = CacheStore::new(CachePolicy::new(missing));
+        assert!(store.load(KEY).await.unwrap().is_none());
     }
 }

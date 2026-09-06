@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Support atomic Windows cache replacement while readers hold the previous file open.
+- Report cache paths with non-directory ancestors consistently across platforms.
+
 ## 0.1.0
 
 - Parse Clash HTTP/SOCKS nodes, URI lists, and Base64 subscriptions with caller-configurable input limits and skipped-entry reporting.
